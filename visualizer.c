@@ -1,7 +1,10 @@
 #include <stdio.h>
+#include <string.h>
+#include <dirent.h>
 #include <stdlib.h>
 #include <stdbool.h>
 
+#include <tiffio.h>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
@@ -12,6 +15,44 @@
 
 #define VERTEX_SHADER_PATH "./shaders/vertex.vert"
 #define FRAGMENT_SHADER_PATH "./shaders/fragment.frag"
+
+// Load images
+
+void load_tiff(const char *filename) {
+    LOG("Reading TIFF file %s\n", filename);
+    TIFF *img = TIFFOpen(filename, "r");
+    if (!img) {
+        LOG("Failed to open TIFF file %s\n", filename);
+        exit(-1);
+    }
+    TIFFClose(img);
+}
+
+void load_images(const char *path) {
+    struct dirent **file_list;
+    int file_count = scandir(path, &file_list, NULL, alphasort);
+    if (file_count < 0) {
+        LOG("Failed to open directory %s\n", path);
+        exit(-1);
+    }
+
+    for (int i = 0; i < file_count; i++) {
+        struct dirent *file = file_list[i];
+
+        if (file->d_type == DT_REG) {
+            char *dot = strrchr(file->d_name, '.');
+            if (dot && strcmp(dot, ".tif") == 0) {
+                // we assume that the path is not more than 255 bytes
+                char file_path[255];
+                snprintf(file_path, sizeof(file_path), "%s/%s", path, file->d_name);
+                load_tiff(file_path);
+            }
+        }
+        free(file_list[i]);
+    }
+
+    free(file_list);
+}
 
 // Rendering
 
@@ -25,7 +66,7 @@ GLuint load_shader(const char *filename, GLenum shader_type) {
     FILE *file = fopen(filename, "r");
     if (!file) {
         LOG("Failed to open file %s\n", filename);
-        return false;
+        exit(-1);
     }
 
     fseek(file, 0, SEEK_END);
@@ -40,7 +81,10 @@ GLuint load_shader(const char *filename, GLenum shader_type) {
 
     // load the shader
     GLuint shader = glCreateShader(shader_type);
-    if (!shader) return 0; // error
+    if (!shader) {
+        LOG("Failed to load shader");
+        exit(-1);
+    }
 
     glShaderSource(shader, 1, (const GLchar **)&buffer, NULL);
     glCompileShader(shader);
@@ -54,7 +98,7 @@ GLuint load_shader(const char *filename, GLenum shader_type) {
     if (!success) {
         glGetShaderInfoLog(shader, 512, NULL, info_log);
         LOG("Shader failed to compile: %s:%s\n", filename, info_log);
-        return 0;
+        exit(-1);
     }
 
     return shader;
@@ -72,7 +116,9 @@ RenderContext *init_renderer() {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_SAMPLES, 4); // Anti-aliasing
 
-    GLFWwindow *window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "CT Scan Visualizer", NULL, NULL);
+    GLFWwindow *window = glfwCreateWindow(
+        WINDOW_WIDTH, WINDOW_HEIGHT, "CT Scan Visualizer", NULL, NULL
+    );
 
     glfwMakeContextCurrent(window);
     glfwSetWindowSizeCallback(window, window_size_callback);
@@ -83,11 +129,12 @@ RenderContext *init_renderer() {
         exit(-1);
     }
 
+    // enable depth testing
+    glEnable(GL_DEPTH_TEST);
+
     // load shaders
     GLuint vertex_shader = load_shader(VERTEX_SHADER_PATH, GL_VERTEX_SHADER);
-    if (!vertex_shader) exit(-1);
     GLuint fragment_shader = load_shader(FRAGMENT_SHADER_PATH, GL_FRAGMENT_SHADER);
-    if (!fragment_shader) exit(-1);
 
     // create the shader program
     GLuint shader_program = glCreateProgram();
@@ -127,7 +174,7 @@ void render(RenderContext *render_ctx) {
     glfwSwapBuffers(render_ctx->window);
 }
 
-// State
+// Input
 
 void handle_input(GLFWwindow *window) {
     glfwPollEvents();
@@ -137,8 +184,9 @@ void handle_input(GLFWwindow *window) {
 }
 
 int main(int argc, char *argv[]) {
-    RenderContext *render_ctx = init_renderer();
+    load_images("./microtus_oregoni");
 
+    RenderContext *render_ctx = init_renderer();
     while (!glfwWindowShouldClose(render_ctx->window)) {
         handle_input(render_ctx->window);
         render(render_ctx);
