@@ -19,14 +19,41 @@
 // Load images
 
 void load_tiff(const char *filename) {
-    LOG("Reading TIFF file %s\n", filename);
-    TIFF *img = TIFFOpen(filename, "r");
-    if (!img) {
-        LOG("Failed to open TIFF file %s\n", filename);
+    LOG("Reading TIFF file: %s\n", filename);
+    TIFF *tif = TIFFOpen(filename, "r");
+    if (!tif) {
+        LOG("Failed to open TIFF file: %s\n", filename);
         exit(-1);
     }
 
-    TIFFClose(img);
+    uint32_t w, h;
+    TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &w);
+    TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &h);
+
+    size_t pixels_count = w * h;
+    uint32_t *raster = malloc(pixels_count * sizeof(uint32_t));
+    if (!raster) {
+        LOG("Failed to allocate memory to read TIFF file: %s\n", filename);
+        exit(-1);
+    }
+
+    if (!TIFFReadRGBAImage(tif, w, h, raster, 0)) {
+        LOG("Failed to read TIFF RGBA data in file: %s\n", filename);
+    }
+
+    for (int i = 0; i < pixels_count; i++) {
+        int r = TIFFGetR(raster[i]);
+        int g = TIFFGetG(raster[i]);
+        int b = TIFFGetB(raster[i]);
+        int a = TIFFGetA(raster[i]);
+
+        if (r || g || b) {
+            LOG("%d %d %d %d\n", r, g, b, a);
+        }
+    }
+
+    free(raster);
+    TIFFClose(tif);
 }
 
 void load_images(const char *path) {
