@@ -25,6 +25,7 @@ void load_tiff(const char *filename) {
         LOG("Failed to open TIFF file %s\n", filename);
         exit(-1);
     }
+
     TIFFClose(img);
 }
 
@@ -42,8 +43,7 @@ void load_images(const char *path) {
         if (file->d_type == DT_REG) {
             char *dot = strrchr(file->d_name, '.');
             if (dot && strcmp(dot, ".tif") == 0) {
-                // we assume that the path is not more than 255 bytes
-                char file_path[255];
+                char file_path[strlen(path) + strlen(file->d_name) + 2];
                 snprintf(file_path, sizeof(file_path), "%s/%s", path, file->d_name);
                 load_tiff(file_path);
             }
