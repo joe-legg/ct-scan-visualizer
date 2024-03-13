@@ -10,7 +10,15 @@
 #define WINDOW_WIDTH 800
 #define WINDOW_HEIGHT 600
 
+#define VERTEX_SHADER_PATH "./shaders/vertex.vert"
+#define FRAGMENT_SHADER_PATH "./shaders/fragment.frag"
+
 // Rendering
+
+typedef struct {
+    GLFWwindow *window;
+    GLuint shader_program;
+} RenderContext;
 
 GLuint load_shader(const char *filename, GLenum shader_type) {
     // read file
@@ -52,34 +60,37 @@ GLuint load_shader(const char *filename, GLenum shader_type) {
     return shader;
 }
 
-GLuint vbo = 0;
-GLuint vao = 0;
-GLuint shader_program;
+void window_size_callback(GLFWwindow *window, int width, int height) {
+    glViewport(0, 0, width, height);
+}
 
-void init_renderer() {
-    float points[] = {
-       0.0f,  0.5f,  0.0f,
-       0.5f, -0.5f,  0.0f,
-      -0.5f, -0.5f,  0.0f
-    };
+RenderContext *init_renderer() {
+    // create a window
+    glfwInit();
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_SAMPLES, 4); // Anti-aliasing
 
-    glGenBuffers(1, &vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, 9 * sizeof(float), points, GL_STATIC_DRAW);
+    GLFWwindow *window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "CT Scan Visualizer", NULL, NULL);
 
-    glGenVertexArrays(1, &vao);
-    glBindVertexArray(vao);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, NULL);
+    glfwMakeContextCurrent(window);
+    glfwSetWindowSizeCallback(window, window_size_callback);
 
-    GLuint vertex_shader = load_shader("./shaders/vertex.vert", GL_VERTEX_SHADER);
+    // initialize glad
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+        LOG("Failed to initialize glad\n");
+        exit(-1);
+    }
+
+    // load shaders
+    GLuint vertex_shader = load_shader(VERTEX_SHADER_PATH, GL_VERTEX_SHADER);
     if (!vertex_shader) exit(-1);
-
-    GLuint fragment_shader = load_shader("./shaders/fragment.frag", GL_FRAGMENT_SHADER);
+    GLuint fragment_shader = load_shader(FRAGMENT_SHADER_PATH, GL_FRAGMENT_SHADER);
     if (!fragment_shader) exit(-1);
 
-    // link the shader program
-    shader_program = glCreateProgram();
+    // create the shader program
+    GLuint shader_program = glCreateProgram();
     glAttachShader(shader_program, vertex_shader);
     glAttachShader(shader_program, fragment_shader);
     glLinkProgram(shader_program);
@@ -93,63 +104,44 @@ void init_renderer() {
         exit(-1);
     }
 
+    // TODO: delete shader program
     glDeleteShader(vertex_shader);
     glDeleteShader(fragment_shader);
 
-    // TODO: delete shader program
+    RenderContext *render_ctx = malloc(sizeof(RenderContext));
+    render_ctx->window = window;
+    render_ctx->shader_program = shader_program;
+
+    return render_ctx;
 }
 
-void render() {
+void terminate_renderer(RenderContext *render_ctx) {
+    glfwDestroyWindow(render_ctx->window);
+    glfwTerminate();
+    free(render_ctx);
+}
+
+void render(RenderContext *render_ctx) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glUseProgram(shader_program);
-    glBindVertexArray(vao);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glUseProgram(render_ctx->shader_program);
+    glfwSwapBuffers(render_ctx->window);
 }
 
-// WINDOW
+// State
 
 void handle_input(GLFWwindow *window) {
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-        glClearColor(0.8f, 0.2f, 0.6f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-    } else if (glfwGetKey(window, GLFW_KEY_W) == GLFW_RELEASE) {
-        glClearColor(0.1f, 0.2f, 0.6f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+    glfwPollEvents();
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+        glfwSetWindowShouldClose(window, 1);
     }
-}
-
-void window_size_callback(GLFWwindow *window, int width, int height) {
-    glViewport(0, 0, width, height);
 }
 
 int main(int argc, char *argv[]) {
-    // create a window
-    glfwInit();
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    RenderContext *render_ctx = init_renderer();
 
-    GLFWwindow *window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "CT Scan Visualizer", NULL, NULL);
-
-    glfwMakeContextCurrent(window);
-    glfwSetWindowSizeCallback(window, window_size_callback);
-
-    // initialize glad
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-        LOG("Failed to initialize glad\n");
-        return -1;
+    while (!glfwWindowShouldClose(render_ctx->window)) {
+        handle_input(render_ctx->window);
+        render(render_ctx);
     }
-
-    init_renderer();
-
-    while (!glfwWindowShouldClose(window)) {
-        handle_input(window);
-        render();
-
-        glfwSwapBuffers(window);
-        glfwPollEvents();
-    }
-
-    glfwDestroyWindow(window);
-    glfwTerminate();
+    terminate_renderer(render_ctx);
 }
