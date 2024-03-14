@@ -1,5 +1,5 @@
 CC=clang
-CFLAGS=-o visualizer -g -Wall -lglfw -lGL -ltiff -I extern/include/
+CFLAGS=-o visualizer -g -Wall -lglfw -lGL -ltiff -lcglm -lm -I extern/include/
 SRC_FILES=visualizer.c extern/src/glad.c
 
 all:

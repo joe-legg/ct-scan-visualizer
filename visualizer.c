@@ -21,7 +21,11 @@
 
 typedef struct {
     GLFWwindow *window;
+
     GLuint shader_program;
+    GLuint vao;
+    GLuint mvp_uniform;
+    mat4 mvp;
 } RenderContext;
 
 typedef struct {
@@ -138,6 +142,45 @@ void load_images(const char *path) {
 
 // rendering
 
+static const GLfloat cube[] = {
+    -1.0f,-1.0f,-1.0f, // triangle 1 : begin
+    -1.0f,-1.0f, 1.0f,
+    -1.0f, 1.0f, 1.0f, // triangle 1 : end
+    1.0f, 1.0f,-1.0f, // triangle 2 : begin
+    -1.0f,-1.0f,-1.0f,
+    -1.0f, 1.0f,-1.0f, // triangle 2 : end
+    1.0f,-1.0f, 1.0f,
+    -1.0f,-1.0f,-1.0f,
+    1.0f,-1.0f,-1.0f,
+    1.0f, 1.0f,-1.0f,
+    1.0f,-1.0f,-1.0f,
+    -1.0f,-1.0f,-1.0f,
+    -1.0f,-1.0f,-1.0f,
+    -1.0f, 1.0f, 1.0f,
+    -1.0f, 1.0f,-1.0f,
+    1.0f,-1.0f, 1.0f,
+    -1.0f,-1.0f, 1.0f,
+    -1.0f,-1.0f,-1.0f,
+    -1.0f, 1.0f, 1.0f,
+    -1.0f,-1.0f, 1.0f,
+    1.0f,-1.0f, 1.0f,
+    1.0f, 1.0f, 1.0f,
+    1.0f,-1.0f,-1.0f,
+    1.0f, 1.0f,-1.0f,
+    1.0f,-1.0f,-1.0f,
+    1.0f, 1.0f, 1.0f,
+    1.0f,-1.0f, 1.0f,
+    1.0f, 1.0f, 1.0f,
+    1.0f, 1.0f,-1.0f,
+    -1.0f, 1.0f,-1.0f,
+    1.0f, 1.0f, 1.0f,
+    -1.0f, 1.0f,-1.0f,
+    -1.0f, 1.0f, 1.0f,
+    1.0f, 1.0f, 1.0f,
+    -1.0f, 1.0f, 1.0f,
+    1.0f,-1.0f, 1.0f
+};
+
 GLuint load_shader(const char *filename, GLenum shader_type) {
     // read file
     FILE *file = fopen(filename, "r");
@@ -186,6 +229,8 @@ void window_size_callback(GLFWwindow *window, int width, int height) {
 }
 
 RenderContext *init_renderer() {
+    RenderContext *render_ctx = malloc(sizeof(RenderContext));
+
     // create a window
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
@@ -193,11 +238,11 @@ RenderContext *init_renderer() {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_SAMPLES, 4);  // Anti-aliasing
 
-    GLFWwindow *window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT,
+    render_ctx->window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT,
                                           "CT Scan Visualizer", NULL, NULL);
 
-    glfwMakeContextCurrent(window);
-    glfwSetWindowSizeCallback(window, window_size_callback);
+    glfwMakeContextCurrent(render_ctx->window);
+    glfwSetWindowSizeCallback(render_ctx->window, window_size_callback);
 
     // initialize glad
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
@@ -214,16 +259,16 @@ RenderContext *init_renderer() {
         load_shader(FRAGMENT_SHADER_PATH, GL_FRAGMENT_SHADER);
 
     // create the shader program
-    GLuint shader_program = glCreateProgram();
-    glAttachShader(shader_program, vertex_shader);
-    glAttachShader(shader_program, fragment_shader);
-    glLinkProgram(shader_program);
+    render_ctx->shader_program = glCreateProgram();
+    glAttachShader(render_ctx->shader_program, vertex_shader);
+    glAttachShader(render_ctx->shader_program, fragment_shader);
+    glLinkProgram(render_ctx->shader_program);
 
     int success;
     char info_log[512];
-    glGetProgramiv(shader_program, GL_LINK_STATUS, &success);
+    glGetProgramiv(render_ctx->shader_program, GL_LINK_STATUS, &success);
     if (!success) {
-        glGetShaderInfoLog(shader_program, 512, NULL, info_log);
+        glGetShaderInfoLog(render_ctx->shader_program, 512, NULL, info_log);
         LOG("Failed to create shader program: %s\n", info_log);
         exit(-1);
     }
@@ -231,15 +276,42 @@ RenderContext *init_renderer() {
     glDeleteShader(vertex_shader);
     glDeleteShader(fragment_shader);
 
-    RenderContext *render_ctx = malloc(sizeof(RenderContext));
-    render_ctx->window = window;
-    render_ctx->shader_program = shader_program;
+    // create buffer object for the cube data
+    GLuint vbo = 0;
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(cube), cube, GL_STATIC_DRAW);
+
+    // create a vertex array object
+    render_ctx->vao = 0;
+    glGenVertexArrays(1, &render_ctx->vao);
+    glBindVertexArray(render_ctx->vao);
+    glEnableVertexAttribArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, NULL);
+
+    // create a model-view-projection matrix
+    mat4 proj;
+    glm_perspective(glm_rad(45.0), (float)WINDOW_WIDTH / WINDOW_HEIGHT, 0.1, 100.0, proj);
+
+    mat4 view;
+    glm_lookat((vec3){4,4,-3}, (vec3){0,0,0}, (vec3){0,1,0}, view);
+
+    mat4 model;
+    glm_mat4_identity(model);
+
+    glm_mat4_mulN((mat4 *[]){&proj, &view, &model}, 3, render_ctx->mvp);
+
+    // create a uniform for the mvp matrix
+    render_ctx->mvp_uniform = glGetUniformLocation(render_ctx->shader_program, "mvp");
 
     return render_ctx;
 }
 
 void terminate_renderer(RenderContext *render_ctx) {
     glDeleteProgram(render_ctx->shader_program);
+    // TODO: delete buffers and vertex arrays
+
     glfwDestroyWindow(render_ctx->window);
     glfwTerminate();
     free(render_ctx);
@@ -248,6 +320,10 @@ void terminate_renderer(RenderContext *render_ctx) {
 void render(RenderContext *render_ctx) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(render_ctx->shader_program);
+    glUniformMatrix4fv(render_ctx->mvp_uniform, 1, GL_FALSE, &render_ctx->mvp[0][0]);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(render_ctx->vao);
+    glDrawArrays(GL_TRIANGLES, 0, 12 * 3);
     glfwSwapBuffers(render_ctx->window);
 }
 
@@ -261,7 +337,7 @@ void handle_input(GLFWwindow *window) {
 }
 
 int main(int argc, char *argv[]) {
-    load_images("./microtus_oregoni");
+    //load_images("./microtus_oregoni");
 
     RenderContext *render_ctx = init_renderer();
     while (!glfwWindowShouldClose(render_ctx->window)) {
