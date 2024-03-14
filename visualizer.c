@@ -20,19 +20,31 @@
 // types
 
 typedef struct {
+    vec3 target;
+    vec3 up;
+    vec3 pos;
+
+    float speed;
+} Camera;
+
+typedef struct {
+    size_t cap;
+    size_t length;
+    vec3 *points;
+} PointCloud;
+
+typedef struct {
+    Camera camera;
+    PointCloud *point_cloud;
+} World;
+
+typedef struct {
     GLFWwindow *window;
 
     GLuint shader_program;
     GLuint vao;
     GLuint mvp_uniform;
-    mat4 mvp;
 } RenderContext;
-
-typedef struct {
-    size_t cap;
-    size_t length;
-    vec3 *data;
-} PointCloud;
 
 // load images
 
@@ -40,31 +52,31 @@ PointCloud *point_cloud_init() {
     PointCloud *point_cloud = malloc(sizeof(PointCloud));
     point_cloud->length = 0;
     point_cloud->cap = 4;
-    point_cloud->data = malloc(sizeof(vec3) * point_cloud->cap);
+    point_cloud->points = malloc(sizeof(vec3) * point_cloud->cap);
     return point_cloud;
 }
 
 void point_cloud_free(PointCloud *point_cloud) {
-    free(point_cloud->data);
+    free(point_cloud->points);
     free(point_cloud);
 }
 
 void point_cloud_append(PointCloud *point_cloud, vec3 point) {
     if (point_cloud->length == point_cloud->cap) {
         point_cloud->cap *= 2;
-        point_cloud->data =
-            realloc(point_cloud->data, sizeof(vec3) * point_cloud->cap);
+        point_cloud->points =
+            realloc(point_cloud->points, sizeof(vec3) * point_cloud->cap);
     }
 
-    memcpy(point_cloud->data[point_cloud->length], point, sizeof(vec3));
+    memcpy(point_cloud->points[point_cloud->length], point, sizeof(vec3));
     ++point_cloud->length;
 }
 
 void point_cloud_csv_dump(PointCloud *point_cloud, FILE *fp) {
     LOG("x,y,z\n");
     for (int i = 0; i < point_cloud->length; i++)
-        fprintf(fp, "%f, %f, %f\n", point_cloud->data[i][0],
-                point_cloud->data[i][1], point_cloud->data[i][2]);
+        fprintf(fp, "%f, %f, %f\n", point_cloud->points[i][0],
+                point_cloud->points[i][1], point_cloud->points[i][2]);
 }
 
 void tiff_to_points(const char *filename, int z, PointCloud *point_cloud) {
@@ -87,7 +99,7 @@ void tiff_to_points(const char *filename, int z, PointCloud *point_cloud) {
 
     // read the image
     if (!TIFFReadRGBAImage(tif, w, h, raster, 0)) {
-        LOG("Failed to read TIFF RGBA data in file: %s\n", filename);
+        LOG("Failed to read TIFF RGBA points in file: %s\n", filename);
     }
     TIFFClose(tif);
 
@@ -109,7 +121,7 @@ void tiff_to_points(const char *filename, int z, PointCloud *point_cloud) {
     _TIFFfree(raster);
 }
 
-void load_images(const char *path) {
+PointCloud *load_images(const char *path) {
     struct dirent **file_list;
     int file_count = scandir(path, &file_list, NULL, alphasort);
     if (file_count < 0) {
@@ -138,50 +150,28 @@ void load_images(const char *path) {
     }
     LOG("\ndone\n");
     free(file_list);
+
+    return point_cloud;
 }
 
 // rendering
 
 static const GLfloat cube[] = {
-    -1.0f,-1.0f,-1.0f, // triangle 1 : begin
-    -1.0f,-1.0f, 1.0f,
-    -1.0f, 1.0f, 1.0f, // triangle 1 : end
-    1.0f, 1.0f,-1.0f, // triangle 2 : begin
-    -1.0f,-1.0f,-1.0f,
-    -1.0f, 1.0f,-1.0f, // triangle 2 : end
-    1.0f,-1.0f, 1.0f,
-    -1.0f,-1.0f,-1.0f,
-    1.0f,-1.0f,-1.0f,
-    1.0f, 1.0f,-1.0f,
-    1.0f,-1.0f,-1.0f,
-    -1.0f,-1.0f,-1.0f,
-    -1.0f,-1.0f,-1.0f,
-    -1.0f, 1.0f, 1.0f,
-    -1.0f, 1.0f,-1.0f,
-    1.0f,-1.0f, 1.0f,
-    -1.0f,-1.0f, 1.0f,
-    -1.0f,-1.0f,-1.0f,
-    -1.0f, 1.0f, 1.0f,
-    -1.0f,-1.0f, 1.0f,
-    1.0f,-1.0f, 1.0f,
-    1.0f, 1.0f, 1.0f,
-    1.0f,-1.0f,-1.0f,
-    1.0f, 1.0f,-1.0f,
-    1.0f,-1.0f,-1.0f,
-    1.0f, 1.0f, 1.0f,
-    1.0f,-1.0f, 1.0f,
-    1.0f, 1.0f, 1.0f,
-    1.0f, 1.0f,-1.0f,
-    -1.0f, 1.0f,-1.0f,
-    1.0f, 1.0f, 1.0f,
-    -1.0f, 1.0f,-1.0f,
-    -1.0f, 1.0f, 1.0f,
-    1.0f, 1.0f, 1.0f,
-    -1.0f, 1.0f, 1.0f,
-    1.0f,-1.0f, 1.0f
-};
+    -1.0f, -1.0f, -1.0f,                       // triangle 1 : begin
+    -1.0f, -1.0f, 1.0f,  -1.0f, 1.0f,  1.0f,   // triangle 1 : end
+    1.0f,  1.0f,  -1.0f,                       // triangle 2 : begin
+    -1.0f, -1.0f, -1.0f, -1.0f, 1.0f,  -1.0f,  // triangle 2 : end
+    1.0f,  -1.0f, 1.0f,  -1.0f, -1.0f, -1.0f, 1.0f,  -1.0f, -1.0f, 1.0f,
+    1.0f,  -1.0f, 1.0f,  -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f,
+    -1.0f, -1.0f, 1.0f,  1.0f,  -1.0f, 1.0f,  -1.0f, 1.0f,  -1.0f, 1.0f,
+    -1.0f, -1.0f, 1.0f,  -1.0f, -1.0f, -1.0f, -1.0f, 1.0f,  1.0f,  -1.0f,
+    -1.0f, 1.0f,  1.0f,  -1.0f, 1.0f,  1.0f,  1.0f,  1.0f,  1.0f,  -1.0f,
+    -1.0f, 1.0f,  1.0f,  -1.0f, 1.0f,  -1.0f, -1.0f, 1.0f,  1.0f,  1.0f,
+    1.0f,  -1.0f, 1.0f,  1.0f,  1.0f,  1.0f,  1.0f,  1.0f,  -1.0f, -1.0f,
+    1.0f,  -1.0f, 1.0f,  1.0f,  1.0f,  -1.0f, 1.0f,  -1.0f, -1.0f, 1.0f,
+    1.0f,  1.0f,  1.0f,  1.0f,  -1.0f, 1.0f,  1.0f,  1.0f,  -1.0f, 1.0f};
 
-GLuint load_shader(const char *filename, GLenum shader_type) {
+GLuint shader_load(const char *filename, GLenum shader_type) {
     // read file
     FILE *file = fopen(filename, "r");
     if (!file) {
@@ -228,7 +218,7 @@ void window_size_callback(GLFWwindow *window, int width, int height) {
     glViewport(0, 0, width, height);
 }
 
-RenderContext *init_renderer() {
+RenderContext *renderer_init() {
     RenderContext *render_ctx = malloc(sizeof(RenderContext));
 
     // create a window
@@ -254,9 +244,9 @@ RenderContext *init_renderer() {
     glEnable(GL_DEPTH_TEST);
 
     // load shaders
-    GLuint vertex_shader = load_shader(VERTEX_SHADER_PATH, GL_VERTEX_SHADER);
+    GLuint vertex_shader = shader_load(VERTEX_SHADER_PATH, GL_VERTEX_SHADER);
     GLuint fragment_shader =
-        load_shader(FRAGMENT_SHADER_PATH, GL_FRAGMENT_SHADER);
+        shader_load(FRAGMENT_SHADER_PATH, GL_FRAGMENT_SHADER);
 
     // create the shader program
     render_ctx->shader_program = glCreateProgram();
@@ -290,25 +280,14 @@ RenderContext *init_renderer() {
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, NULL);
 
-    // create a model-view-projection matrix
-    mat4 proj;
-    glm_perspective(glm_rad(45.0), (float)WINDOW_WIDTH / WINDOW_HEIGHT, 0.1, 100.0, proj);
-
-    mat4 view;
-    glm_lookat((vec3){4,4,-3}, (vec3){0,0,0}, (vec3){0,1,0}, view);
-
-    mat4 model;
-    glm_mat4_identity(model);
-
-    glm_mat4_mulN((mat4 *[]){&proj, &view, &model}, 3, render_ctx->mvp);
-
     // create a uniform for the mvp matrix
-    render_ctx->mvp_uniform = glGetUniformLocation(render_ctx->shader_program, "mvp");
+    render_ctx->mvp_uniform =
+        glGetUniformLocation(render_ctx->shader_program, "mvp");
 
     return render_ctx;
 }
 
-void terminate_renderer(RenderContext *render_ctx) {
+void renderer_free(RenderContext *render_ctx) {
     glDeleteProgram(render_ctx->shader_program);
     // TODO: delete buffers and vertex arrays
 
@@ -317,32 +296,86 @@ void terminate_renderer(RenderContext *render_ctx) {
     free(render_ctx);
 }
 
-void render(RenderContext *render_ctx) {
+void renderer_calculate_vp_matrix(const Camera *camera, int win_h, int win_w,
+                                  mat4 *vp) {
+    mat4 proj, view;
+    // projection
+    glm_perspective(glm_rad(45.0), (float)win_h / win_w, 0.1, 100.0, proj);
+
+    // view
+    glm_lookat((float *)camera->target, (float *)camera->pos,
+               (float *)camera->up, view);
+
+    // view-projection matrix
+    glm_mat4_mul(proj, view, *vp);
+}
+
+void renderer_update(RenderContext *render_ctx, const World *world) {
+    // calculate the view-projection matrix
+    mat4 vp;
+    int win_w, win_h;
+    glfwGetWindowSize(render_ctx->window, &win_w, &win_h);
+    renderer_calculate_vp_matrix(&world->camera, win_w, win_h, &vp);
+
+    // draw
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(render_ctx->shader_program);
-    glUniformMatrix4fv(render_ctx->mvp_uniform, 1, GL_FALSE, &render_ctx->mvp[0][0]);
+    glUniformMatrix4fv(render_ctx->mvp_uniform, 1, GL_FALSE, &vp[0][0]);
     glEnableVertexAttribArray(0);
     glBindVertexArray(render_ctx->vao);
     glDrawArrays(GL_TRIANGLES, 0, 12 * 3);
     glfwSwapBuffers(render_ctx->window);
 }
 
-// input
+// state
 
-void handle_input(GLFWwindow *window) {
+World *world_init() {
+    World *world = malloc(sizeof(World));
+    world->camera = (Camera){
+        .target = {4, 4, -3},
+        .up = {0, 1, 0},
+        .pos = {0, 0, 0},
+        .speed = 0.5,
+    };
+    //world->point_cloud = load_images("./microtus_oregoni");
+    return world;
+}
+
+void world_free(World *world) {
+    point_cloud_free(world->point_cloud);
+    free(world);
+}
+
+void handle_input(GLFWwindow *window, World *world) {
+    // TODO: seperate input and world state so that glfw is only used in the
+    //       renderer/input handler
+    //       (input fires events -> world state updates based on events)
+
     glfwPollEvents();
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
         glfwSetWindowShouldClose(window, 1);
+    } else if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+        vec3 movement;
+        glm_vec3_scale(world->camera.target, world->camera.speed, movement);
+        glm_vec3_add(world->camera.pos, movement, world->camera.pos);
+    } else if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+    } else if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+        vec3 movement;
+        glm_vec3_scale(world->camera.target, world->camera.speed, movement);
+        glm_vec3_sub(world->camera.pos, movement, world->camera.pos);
+    } else if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
     }
 }
 
 int main(int argc, char *argv[]) {
-    //load_images("./microtus_oregoni");
+    World *world = world_init();
+    RenderContext *render_ctx = renderer_init();
 
-    RenderContext *render_ctx = init_renderer();
     while (!glfwWindowShouldClose(render_ctx->window)) {
-        handle_input(render_ctx->window);
-        render(render_ctx);
+        handle_input(render_ctx->window, world);
+        renderer_update(render_ctx, world);
     }
-    terminate_renderer(render_ctx);
+
+    renderer_free(render_ctx);
+    world_free(world);
 }
