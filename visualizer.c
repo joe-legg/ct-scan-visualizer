@@ -52,14 +52,18 @@ void point_cloud_append(PointCloud *point_cloud, vec3 point) {
             realloc(point_cloud->data, sizeof(vec3) * point_cloud->cap);
     }
 
-    memcpy(point_cloud->data[point_cloud->length], point,
-           sizeof(vec3));
+    memcpy(point_cloud->data[point_cloud->length], point, sizeof(vec3));
     ++point_cloud->length;
 }
 
-void tiff_to_points(const char *filename, int z, PointCloud *point_cloud) {
-    LOG("Reading TIFF file: %s\n", filename);
+void point_cloud_csv_dump(PointCloud *point_cloud, FILE *fp) {
+    LOG("x,y,z\n");
+    for (int i = 0; i < point_cloud->length; i++)
+        fprintf(fp, "%f, %f, %f\n", point_cloud->data[i][0],
+                point_cloud->data[i][1], point_cloud->data[i][2]);
+}
 
+void tiff_to_points(const char *filename, int z, PointCloud *point_cloud) {
     TIFF *tif = TIFFOpen(filename, "r");
     if (!tif) {
         LOG("Failed to open TIFF file: %s\n", filename);
@@ -112,8 +116,9 @@ void load_images(const char *path) {
     PointCloud *point_cloud = point_cloud_init();
     float z = 0;
     for (int i = 0; i < file_count; i++) {
-        struct dirent *file = file_list[i];
+        LOG("loading files: %d/%d\r", i, file_count);
 
+        struct dirent *file = file_list[i];
         if (file->d_type == DT_REG) {
             char *dot = strrchr(file->d_name, '.');
             if (dot && strcmp(dot, ".tif") == 0) {
@@ -127,7 +132,7 @@ void load_images(const char *path) {
         }
         free(file_list[i]);
     }
-
+    LOG("\ndone\n");
     free(file_list);
 }
 
