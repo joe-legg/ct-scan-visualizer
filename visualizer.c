@@ -303,7 +303,7 @@ void renderer_calculate_vp_matrix(const Camera *camera, int win_h, int win_w,
     glm_perspective(glm_rad(45.0), (float)win_h / win_w, 0.1, 100.0, proj);
 
     // view
-    glm_lookat((float *)camera->target, (float *)camera->pos,
+    glm_lookat((float *)camera->pos, (float *)camera->target,
                (float *)camera->up, view);
 
     // view-projection matrix
@@ -335,7 +335,7 @@ World *world_init() {
         .target = {4, 4, -3},
         .up = {0, 1, 0},
         .pos = {0, 0, 0},
-        .speed = 0.5,
+        .speed = 0.05,
     };
     //world->point_cloud = load_images("./microtus_oregoni");
     return world;
@@ -351,18 +351,17 @@ void handle_input(GLFWwindow *window, World *world) {
     //       renderer/input handler
     //       (input fires events -> world state updates based on events)
 
+    // TODO: abstract out camera movement logic to it's own functions (maybe abstract the matrix calc too)
+    // TODO: delta time
+
     glfwPollEvents();
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
         glfwSetWindowShouldClose(window, 1);
     } else if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-        vec3 movement;
-        glm_vec3_scale(world->camera.target, world->camera.speed, movement);
-        glm_vec3_add(world->camera.pos, movement, world->camera.pos);
+        glm_vec3_muladds(world->camera.target, world->camera.speed, world->camera.pos);
     } else if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
     } else if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-        vec3 movement;
-        glm_vec3_scale(world->camera.target, world->camera.speed, movement);
-        glm_vec3_sub(world->camera.pos, movement, world->camera.pos);
+        glm_vec3_mulsubs(world->camera.target, world->camera.speed, world->camera.pos);
     } else if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
     }
 }
