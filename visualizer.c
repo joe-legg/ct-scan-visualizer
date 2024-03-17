@@ -13,6 +13,7 @@
 
 #define WINDOW_WIDTH 800
 #define WINDOW_HEIGHT 600
+#define EVENT_QUEUE_CAPACITY 512
 
 #define VERTEX_SHADER_PATH "./shaders/vertex.vert"
 #define FRAGMENT_SHADER_PATH "./shaders/fragment.frag"
@@ -20,11 +21,17 @@
 // types
 
 typedef struct {
-    vec3 target;
-    vec3 up;
     vec3 pos;
+    vec3 forward;
+    vec3 right;
+    vec3 up;
+    vec3 world_up;
+
+    float yaw;
+    float pitch;
 
     float speed;
+    float look_sensitivity;
 } Camera;
 
 typedef struct {
@@ -33,8 +40,33 @@ typedef struct {
     vec3 *points;
 } PointCloud;
 
+typedef enum { FORWARD, BACKWARD, LEFT, RIGHT } Direction;
+
+typedef enum {
+    CAMERA_MOVE,
+    CAMERA_LOOK,
+} EventType;
+
 typedef struct {
-    Camera camera;
+    EventType type;
+    union {
+        vec2 mouse_pos;
+        Direction camera_direction;
+    };
+} Event;
+
+typedef struct {
+    Event queue[EVENT_QUEUE_CAPACITY];
+    size_t length;
+} EventQueue;
+
+typedef struct {
+    float delta_time;
+    float last_frame_time;
+
+    vec2 last_mouse_pos;
+
+    Camera *camera;
     PointCloud *point_cloud;
 } World;
 
@@ -46,7 +78,7 @@ typedef struct {
     GLuint mvp_uniform;
 } RenderContext;
 
-// load images
+// point cloud
 
 PointCloud *point_cloud_init() {
     PointCloud *point_cloud = malloc(sizeof(PointCloud));
@@ -73,7 +105,7 @@ void point_cloud_append(PointCloud *point_cloud, vec3 point) {
 }
 
 void point_cloud_csv_dump(PointCloud *point_cloud, FILE *fp) {
-    LOG("x,y,z\n");
+    fprintf(fp, "x,y,z\n");
     for (int i = 0; i < point_cloud->length; i++)
         fprintf(fp, "%f, %f, %f\n", point_cloud->points[i][0],
                 point_cloud->points[i][1], point_cloud->points[i][2]);
@@ -90,7 +122,7 @@ void tiff_to_points(const char *filename, int z, PointCloud *point_cloud) {
     TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &w);
     TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &h);
 
-    size_t pixels_count = w * h;
+    uint32_t pixels_count = w * h;
     uint32_t *raster = _TIFFmalloc(pixels_count * sizeof(uint32_t));
     if (!raster) {
         LOG("Failed to allocate memory to read TIFF file: %s\n", filename);
@@ -121,7 +153,7 @@ void tiff_to_points(const char *filename, int z, PointCloud *point_cloud) {
     _TIFFfree(raster);
 }
 
-PointCloud *load_images(const char *path) {
+PointCloud *point_cloud_load_from_path(const char *path) {
     struct dirent **file_list;
     int file_count = scandir(path, &file_list, NULL, alphasort);
     if (file_count < 0) {
@@ -154,6 +186,101 @@ PointCloud *load_images(const char *path) {
     return point_cloud;
 }
 
+// camera
+
+void _camera_update_vectors(Camera *camera) {
+    // calculate forward
+    glm_vec3_zero(camera->forward);
+    camera->forward[0] = cos(glm_rad(camera->yaw)) * cos(glm_rad(camera->pitch));
+    camera->forward[1] = sin(glm_rad(camera->pitch));
+    camera->forward[2] = sin(glm_rad(camera-> yaw)) * cos(glm_rad(camera->pitch));
+    glm_normalize(camera->forward);
+
+    // right
+    glm_cross(camera->forward, camera->world_up, camera->right);
+    glm_vec3_normalize(camera->right);
+
+    // up
+    glm_cross(camera->right, camera->forward, camera->up);
+    glm_vec3_normalize(camera->up);
+}
+
+Camera *camera_init() {
+    Camera *camera = malloc(sizeof(Camera));
+    glm_vec3_zero(camera->up);
+    camera->world_up[1] = 1;
+    glm_vec3_zero(camera->pos);
+
+    camera->speed = 8;
+    camera->look_sensitivity = 0.02;
+
+    _camera_update_vectors(camera);
+    return camera;
+}
+
+void camera_free(Camera *camera) { free(camera); }
+
+void camera_get_view_matrix(const Camera *camera, mat4 *dest) {
+    vec3 target;
+    glm_vec3_add((float *)camera->forward, (float *)camera->pos, target);
+    glm_lookat((float *)camera->pos, (float *)target,
+               (float *)camera->up, *dest);
+}
+
+void camera_move(float delta_time, Camera *camera, Direction direction) {
+    float speed = camera->speed * delta_time;
+    switch (direction) {
+        case FORWARD:
+            glm_vec3_muladds(camera->forward, speed, camera->pos);
+            break;
+        case BACKWARD:
+            glm_vec3_mulsubs(camera->forward, speed, camera->pos);
+            break;
+        case LEFT: {
+            vec3 right;
+            glm_cross(camera->forward, camera->up, right);
+            glm_vec3_mulsubs(right, speed, camera->pos);
+            break;
+        }
+        case RIGHT: {
+            vec3 right;
+            glm_cross(camera->forward, camera->up, right);
+            glm_vec3_muladds(right, speed, camera->pos);
+            break;
+        }
+    }
+}
+
+void camera_look(Camera *camera, float xoffset, float yoffset) {
+    xoffset *= camera->look_sensitivity;
+    yoffset *= camera->look_sensitivity;
+
+    camera->yaw += xoffset;
+    camera->pitch -= yoffset;
+
+    // don't allow the user to flip the camera over 90 degrees
+    if(camera->pitch > 89.0f)
+      camera->pitch =  89.0f;
+    if(camera->pitch < -89.0f)
+      camera->pitch = -89.0f;
+
+    _camera_update_vectors(camera);
+}
+
+// event queue
+
+Event *event_queue_new_event(EventQueue *event_queue) {
+    if (event_queue->length == EVENT_QUEUE_CAPACITY) {
+        LOG("Too many events\n");
+        exit(-1);
+    }
+    Event *event = &event_queue->queue[event_queue->length];
+    event_queue->length++;
+    return event;
+}
+
+void event_queue_flush(EventQueue *event_queue) { event_queue->length = 0; }
+
 // rendering
 
 static const GLfloat cube[] = {
@@ -170,6 +297,12 @@ static const GLfloat cube[] = {
     1.0f,  -1.0f, 1.0f,  1.0f,  1.0f,  1.0f,  1.0f,  1.0f,  -1.0f, -1.0f,
     1.0f,  -1.0f, 1.0f,  1.0f,  1.0f,  -1.0f, 1.0f,  -1.0f, -1.0f, 1.0f,
     1.0f,  1.0f,  1.0f,  1.0f,  -1.0f, 1.0f,  1.0f,  1.0f,  -1.0f, 1.0f};
+
+const vec3 cub_positions[] = {{0.0f, 0.0f, 0.0f},    {2.0f, 5.0f, -15.0f},
+                              {-1.5f, -2.2f, -2.5f}, {-3.8f, -2.0f, -12.3f},
+                              {2.4f, -0.4f, -3.5f},  {-1.7f, 3.0f, -7.5f},
+                              {1.3f, -2.0f, -2.5f},  {1.5f, 2.0f, -2.5f},
+                              {1.5f, 0.2f, -1.5f},   {-1.3f, 1.0f, -1.5f}};
 
 GLuint shader_load(const char *filename, GLenum shader_type) {
     // read file
@@ -230,9 +363,14 @@ RenderContext *renderer_init() {
 
     render_ctx->window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT,
                                           "CT Scan Visualizer", NULL, NULL);
+    if (!render_ctx->window) {
+        LOG("Failed to initialize window\n");
+        exit(-1);
+    }
 
     glfwMakeContextCurrent(render_ctx->window);
     glfwSetWindowSizeCallback(render_ctx->window, window_size_callback);
+    glfwSetInputMode(render_ctx->window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     // initialize glad
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
@@ -296,34 +434,35 @@ void renderer_free(RenderContext *render_ctx) {
     free(render_ctx);
 }
 
-void renderer_calculate_vp_matrix(const Camera *camera, int win_h, int win_w,
-                                  mat4 *vp) {
-    mat4 proj, view;
-    // projection
-    glm_perspective(glm_rad(45.0), (float)win_h / win_w, 0.1, 100.0, proj);
-
-    // view
-    glm_lookat((float *)camera->pos, (float *)camera->target,
-               (float *)camera->up, view);
-
-    // view-projection matrix
-    glm_mat4_mul(proj, view, *vp);
-}
-
 void renderer_update(RenderContext *render_ctx, const World *world) {
-    // calculate the view-projection matrix
-    mat4 vp;
+    // TODO: create window resize event
     int win_w, win_h;
-    glfwGetWindowSize(render_ctx->window, &win_w, &win_h);
-    renderer_calculate_vp_matrix(&world->camera, win_w, win_h, &vp);
+    glfwGetWindowSize(render_ctx->window, &win_w, &win_h); 
+
+    // calculate the view-projection matrix
+    mat4 proj;
+    glm_perspective(glm_rad(45.0), (float)win_w / win_h, 0.1, 100.0, proj);
+
+    mat4 view;
+    camera_get_view_matrix(world->camera, &view);
+
+    mat4 vp;
+    glm_mat4_mul(proj, view, vp);
 
     // draw
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(render_ctx->shader_program);
-    glUniformMatrix4fv(render_ctx->mvp_uniform, 1, GL_FALSE, &vp[0][0]);
-    glEnableVertexAttribArray(0);
+
     glBindVertexArray(render_ctx->vao);
-    glDrawArrays(GL_TRIANGLES, 0, 12 * 3);
+    for (int i = 0; i < 10; i++) {
+        mat4 mvp, model;
+        glm_mat4_identity(model);
+        glm_translate(model, (float *)cub_positions[i]);
+        glm_mat4_mul(vp, model, mvp);
+        glUniformMatrix4fv(render_ctx->mvp_uniform, 1, GL_FALSE, &mvp[0][0]);
+        glDrawArrays(GL_TRIANGLES, 0, 12 * 3);
+    }
+
     glfwSwapBuffers(render_ctx->window);
 }
 
@@ -331,47 +470,93 @@ void renderer_update(RenderContext *render_ctx, const World *world) {
 
 World *world_init() {
     World *world = malloc(sizeof(World));
-    world->camera = (Camera){
-        .target = {4, 4, -3},
-        .up = {0, 1, 0},
-        .pos = {0, 0, 0},
-        .speed = 0.05,
-    };
-    //world->point_cloud = load_images("./microtus_oregoni");
+    world->delta_time = 0;
+    world->last_frame_time = 0;
+
+    // TODO: fix this once window size event exists
+    world->last_mouse_pos[0] = (float)WINDOW_WIDTH / 2;
+    world->last_mouse_pos[1] = (float)WINDOW_HEIGHT / 2;
+
+    world->camera = camera_init();
+    // world->point_cloud = point_cloud_load_from_path("./microtus_oregoni");
     return world;
 }
 
 void world_free(World *world) {
     point_cloud_free(world->point_cloud);
+    camera_free(world->camera);
     free(world);
 }
 
-void handle_input(GLFWwindow *window, World *world) {
-    // TODO: seperate input and world state so that glfw is only used in the
-    //       renderer/input handler
-    //       (input fires events -> world state updates based on events)
+void world_update(World *world, const EventQueue *event_queue) {
+    float current_frame = glfwGetTime();
+    world->delta_time = current_frame - world->last_frame_time;
+    world->last_frame_time = current_frame;
 
-    // TODO: abstract out camera movement logic to it's own functions (maybe abstract the matrix calc too)
-    // TODO: delta time
+    for (int i = 0; i < event_queue->length; i++) {
+        Event event = event_queue->queue[i];
+        switch (event.type) {
+            case CAMERA_MOVE:
+                camera_move(world->delta_time, world->camera,
+                            event.camera_direction);
+                break;
+            case CAMERA_LOOK: {
+                float xoffset = event.mouse_pos[0] - world->last_mouse_pos[0];
+                float yoffset = event.mouse_pos[1] - world->last_mouse_pos[1];
+                glm_vec2_copy(event.mouse_pos, world->last_mouse_pos);
 
+                camera_look(world->camera, xoffset, yoffset);
+                break;
+            }
+            default:
+                LOG("Unkown event: %d\n", event.type);
+                break;
+        }
+    }
+}
+
+// input
+
+void handle_input(GLFWwindow *window, EventQueue *event_queue) {
     glfwPollEvents();
+    event_queue_flush(event_queue);
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
         glfwSetWindowShouldClose(window, 1);
     } else if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-        glm_vec3_muladds(world->camera.target, world->camera.speed, world->camera.pos);
-    } else if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+        Event *e = event_queue_new_event(event_queue);
+        e->type = CAMERA_MOVE;
+        e->camera_direction = FORWARD;
     } else if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-        glm_vec3_mulsubs(world->camera.target, world->camera.speed, world->camera.pos);
+        Event *e = event_queue_new_event(event_queue);
+        e->type = CAMERA_MOVE;
+        e->camera_direction = BACKWARD;
+    } else if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+        Event *e = event_queue_new_event(event_queue);
+        e->type = CAMERA_MOVE;
+        e->camera_direction = LEFT;
     } else if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+        Event *e = event_queue_new_event(event_queue);
+        e->type = CAMERA_MOVE;
+        e->camera_direction = RIGHT;
     }
+
+    // TODO: it's inefficient to create a cursor event each frame, switch to using callbacks
+    double xpos, ypos;
+    glfwGetCursorPos(window, &xpos, &ypos);
+    Event *e = event_queue_new_event(event_queue);
+    e->type = CAMERA_LOOK;
+    e->mouse_pos[0] = xpos;
+    e->mouse_pos[1] = ypos;
 }
 
 int main(int argc, char *argv[]) {
     World *world = world_init();
     RenderContext *render_ctx = renderer_init();
+    EventQueue event_queue = {0};
 
     while (!glfwWindowShouldClose(render_ctx->window)) {
-        handle_input(render_ctx->window, world);
+        handle_input(render_ctx->window, &event_queue);
+        world_update(world, &event_queue);
         renderer_update(render_ctx, world);
     }
 
