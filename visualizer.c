@@ -43,8 +43,10 @@ typedef struct {
 typedef enum { FORWARD, BACKWARD, LEFT, RIGHT } Direction;
 
 typedef enum {
-    CAMERA_MOVE,
-    CAMERA_LOOK,
+    E_SHOULD_QUIT,
+    E_WINDOW_RESIZE,
+    E_CAMERA_MOVE,
+    E_CAMERA_LOOK,
 } EventType;
 
 typedef struct {
@@ -52,6 +54,11 @@ typedef struct {
     union {
         vec2 mouse_pos;
         Direction camera_direction;
+
+        struct {
+            int window_w;
+            int window_h;
+        };
     };
 } Event;
 
@@ -61,9 +68,13 @@ typedef struct {
 } EventQueue;
 
 typedef struct {
+    bool running;
+
     float delta_time;
     float last_frame_time;
 
+    int window_w;
+    int window_h;
     vec2 last_mouse_pos;
 
     Camera *camera;
@@ -191,9 +202,11 @@ PointCloud *point_cloud_load_from_path(const char *path) {
 void _camera_update_vectors(Camera *camera) {
     // calculate forward
     glm_vec3_zero(camera->forward);
-    camera->forward[0] = cos(glm_rad(camera->yaw)) * cos(glm_rad(camera->pitch));
+    camera->forward[0] =
+        cos(glm_rad(camera->yaw)) * cos(glm_rad(camera->pitch));
     camera->forward[1] = sin(glm_rad(camera->pitch));
-    camera->forward[2] = sin(glm_rad(camera-> yaw)) * cos(glm_rad(camera->pitch));
+    camera->forward[2] =
+        sin(glm_rad(camera->yaw)) * cos(glm_rad(camera->pitch));
     glm_normalize(camera->forward);
 
     // right
@@ -223,8 +236,8 @@ void camera_free(Camera *camera) { free(camera); }
 void camera_get_view_matrix(const Camera *camera, mat4 *dest) {
     vec3 target;
     glm_vec3_add((float *)camera->forward, (float *)camera->pos, target);
-    glm_lookat((float *)camera->pos, (float *)target,
-               (float *)camera->up, *dest);
+    glm_lookat((float *)camera->pos, (float *)target, (float *)camera->up,
+               *dest);
 }
 
 void camera_move(float delta_time, Camera *camera, Direction direction) {
@@ -259,10 +272,8 @@ void camera_look(Camera *camera, float xoffset, float yoffset) {
     camera->pitch -= yoffset;
 
     // don't allow the user to flip the camera over 90 degrees
-    if(camera->pitch > 89.0f)
-      camera->pitch =  89.0f;
-    if(camera->pitch < -89.0f)
-      camera->pitch = -89.0f;
+    if (camera->pitch > 89.0f) camera->pitch = 89.0f;
+    else if (camera->pitch < -89.0f) camera->pitch = -89.0f;
 
     _camera_update_vectors(camera);
 }
@@ -347,10 +358,6 @@ GLuint shader_load(const char *filename, GLenum shader_type) {
     return shader;
 }
 
-void window_size_callback(GLFWwindow *window, int width, int height) {
-    glViewport(0, 0, width, height);
-}
-
 RenderContext *renderer_init() {
     RenderContext *render_ctx = malloc(sizeof(RenderContext));
 
@@ -369,8 +376,6 @@ RenderContext *renderer_init() {
     }
 
     glfwMakeContextCurrent(render_ctx->window);
-    glfwSetWindowSizeCallback(render_ctx->window, window_size_callback);
-    glfwSetInputMode(render_ctx->window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     // initialize glad
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
@@ -435,13 +440,9 @@ void renderer_free(RenderContext *render_ctx) {
 }
 
 void renderer_update(RenderContext *render_ctx, const World *world) {
-    // TODO: create window resize event
-    int win_w, win_h;
-    glfwGetWindowSize(render_ctx->window, &win_w, &win_h); 
-
     // calculate the view-projection matrix
     mat4 proj;
-    glm_perspective(glm_rad(45.0), (float)win_w / win_h, 0.1, 100.0, proj);
+    glm_perspective(glm_rad(45.0), (float)world->window_w / world->window_h, 0.1, 100.0, proj);
 
     mat4 view;
     camera_get_view_matrix(world->camera, &view);
@@ -450,6 +451,8 @@ void renderer_update(RenderContext *render_ctx, const World *world) {
     glm_mat4_mul(proj, view, vp);
 
     // draw
+    glViewport(0, 0, world->window_w, world->window_h);
+
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(render_ctx->shader_program);
 
@@ -470,12 +473,14 @@ void renderer_update(RenderContext *render_ctx, const World *world) {
 
 World *world_init() {
     World *world = malloc(sizeof(World));
+    world->running = true;
+
     world->delta_time = 0;
     world->last_frame_time = 0;
 
-    // TODO: fix this once window size event exists
-    world->last_mouse_pos[0] = (float)WINDOW_WIDTH / 2;
-    world->last_mouse_pos[1] = (float)WINDOW_HEIGHT / 2;
+    world->window_w = 0;
+    world->window_h = 0;
+    glm_vec2_zero(world->last_mouse_pos);
 
     world->camera = camera_init();
     // world->point_cloud = point_cloud_load_from_path("./microtus_oregoni");
@@ -496,11 +501,18 @@ void world_update(World *world, const EventQueue *event_queue) {
     for (int i = 0; i < event_queue->length; i++) {
         Event event = event_queue->queue[i];
         switch (event.type) {
-            case CAMERA_MOVE:
+            case E_SHOULD_QUIT:
+                world->running = false;
+                break;
+            case E_WINDOW_RESIZE:
+                world->window_w = event.window_w;
+                world->window_h = event.window_h;
+                break;
+            case E_CAMERA_MOVE:
                 camera_move(world->delta_time, world->camera,
                             event.camera_direction);
                 break;
-            case CAMERA_LOOK: {
+            case E_CAMERA_LOOK: {
                 float xoffset = event.mouse_pos[0] - world->last_mouse_pos[0];
                 float yoffset = event.mouse_pos[1] - world->last_mouse_pos[1];
                 glm_vec2_copy(event.mouse_pos, world->last_mouse_pos);
@@ -517,45 +529,66 @@ void world_update(World *world, const EventQueue *event_queue) {
 
 // input
 
-void handle_input(GLFWwindow *window, EventQueue *event_queue) {
-    glfwPollEvents();
-    event_queue_flush(event_queue);
-    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-        glfwSetWindowShouldClose(window, 1);
-    } else if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-        Event *e = event_queue_new_event(event_queue);
-        e->type = CAMERA_MOVE;
-        e->camera_direction = FORWARD;
-    } else if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-        Event *e = event_queue_new_event(event_queue);
-        e->type = CAMERA_MOVE;
-        e->camera_direction = BACKWARD;
-    } else if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-        Event *e = event_queue_new_event(event_queue);
-        e->type = CAMERA_MOVE;
-        e->camera_direction = LEFT;
-    } else if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-        Event *e = event_queue_new_event(event_queue);
-        e->type = CAMERA_MOVE;
-        e->camera_direction = RIGHT;
-    }
-
-    // TODO: it's inefficient to create a cursor event each frame, switch to using callbacks
-    double xpos, ypos;
-    glfwGetCursorPos(window, &xpos, &ypos);
+void input_window_size_callback(GLFWwindow *window, int width, int height) {
+    EventQueue *event_queue = glfwGetWindowUserPointer(window);
     Event *e = event_queue_new_event(event_queue);
-    e->type = CAMERA_LOOK;
+    e->type = E_WINDOW_RESIZE;
+    e->window_w = width;
+    e->window_h = height;
+}
+
+void input_cursor_callback(GLFWwindow* window, double xpos, double ypos)
+{
+    EventQueue *event_queue = glfwGetWindowUserPointer(window);
+    Event *e = event_queue_new_event(event_queue);
+    e->type = E_CAMERA_LOOK;
     e->mouse_pos[0] = xpos;
     e->mouse_pos[1] = ypos;
 }
 
+void input_update(GLFWwindow *window, EventQueue *event_queue) {
+    // TODO: should events have constructor functions?
+
+    event_queue_flush(event_queue);
+    glfwPollEvents();
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+        Event *e = event_queue_new_event(event_queue);
+        e->type = E_SHOULD_QUIT;
+    } else if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+        Event *e = event_queue_new_event(event_queue);
+        e->type = E_CAMERA_MOVE;
+        e->camera_direction = FORWARD;
+    } else if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+        Event *e = event_queue_new_event(event_queue);
+        e->type = E_CAMERA_MOVE;
+        e->camera_direction = BACKWARD;
+    } else if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+        Event *e = event_queue_new_event(event_queue);
+        e->type = E_CAMERA_MOVE;
+        e->camera_direction = LEFT;
+    } else if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+        Event *e = event_queue_new_event(event_queue);
+        e->type = E_CAMERA_MOVE;
+        e->camera_direction = RIGHT;
+    }
+}
+
+void input_init(GLFWwindow *window, EventQueue *event_queue) {
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+    glfwSetWindowUserPointer(window, event_queue);
+    glfwSetWindowSizeCallback(window, input_window_size_callback);
+    glfwSetCursorPosCallback(window, input_cursor_callback);
+}
+
 int main(int argc, char *argv[]) {
+    EventQueue event_queue = {0};
     World *world = world_init();
     RenderContext *render_ctx = renderer_init();
-    EventQueue event_queue = {0};
+    input_init(render_ctx->window, &event_queue);
 
-    while (!glfwWindowShouldClose(render_ctx->window)) {
-        handle_input(render_ctx->window, &event_queue);
+    while (world->running) {
+        input_update(render_ctx->window, &event_queue);
         world_update(world, &event_queue);
         renderer_update(render_ctx, world);
     }
