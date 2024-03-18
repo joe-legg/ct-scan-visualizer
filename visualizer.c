@@ -445,7 +445,7 @@ void renderer_update(RenderContext *render_ctx, const World *world) {
     glm_scale(model, (vec3){0.01, 0.01, 0.01});
     glm_mat4_mul(vp, model, mvp);
     glUniformMatrix4fv(render_ctx->mvp_uniform, 1, GL_FALSE, &mvp[0][0]);
-    glPointSize(.0002);
+    glPointSize(.000002);
     glDrawArrays(GL_POINTS, 0, world->point_cloud->length);
 
     glfwSwapBuffers(render_ctx->window);
@@ -465,7 +465,7 @@ World *world_init() {
     glm_vec2_zero(world->last_mouse_pos);
 
     world->camera = camera_init();
-    world->point_cloud = point_cloud_load_from_path("./microtus_oregoni");
+    world->point_cloud = point_cloud_load_from_path("./peromyscus_gossypinus");
     return world;
 }
 
