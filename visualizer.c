@@ -272,8 +272,10 @@ void camera_look(Camera *camera, float xoffset, float yoffset) {
     camera->pitch -= yoffset;
 
     // don't allow the user to flip the camera over 90 degrees
-    if (camera->pitch > 89.0f) camera->pitch = 89.0f;
-    else if (camera->pitch < -89.0f) camera->pitch = -89.0f;
+    if (camera->pitch > 89.0f)
+        camera->pitch = 89.0f;
+    else if (camera->pitch < -89.0f)
+        camera->pitch = -89.0f;
 
     _camera_update_vectors(camera);
 }
@@ -293,27 +295,6 @@ Event *event_queue_new_event(EventQueue *event_queue) {
 void event_queue_flush(EventQueue *event_queue) { event_queue->length = 0; }
 
 // rendering
-
-static const GLfloat cube[] = {
-    -1.0f, -1.0f, -1.0f,                       // triangle 1 : begin
-    -1.0f, -1.0f, 1.0f,  -1.0f, 1.0f,  1.0f,   // triangle 1 : end
-    1.0f,  1.0f,  -1.0f,                       // triangle 2 : begin
-    -1.0f, -1.0f, -1.0f, -1.0f, 1.0f,  -1.0f,  // triangle 2 : end
-    1.0f,  -1.0f, 1.0f,  -1.0f, -1.0f, -1.0f, 1.0f,  -1.0f, -1.0f, 1.0f,
-    1.0f,  -1.0f, 1.0f,  -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f,
-    -1.0f, -1.0f, 1.0f,  1.0f,  -1.0f, 1.0f,  -1.0f, 1.0f,  -1.0f, 1.0f,
-    -1.0f, -1.0f, 1.0f,  -1.0f, -1.0f, -1.0f, -1.0f, 1.0f,  1.0f,  -1.0f,
-    -1.0f, 1.0f,  1.0f,  -1.0f, 1.0f,  1.0f,  1.0f,  1.0f,  1.0f,  -1.0f,
-    -1.0f, 1.0f,  1.0f,  -1.0f, 1.0f,  -1.0f, -1.0f, 1.0f,  1.0f,  1.0f,
-    1.0f,  -1.0f, 1.0f,  1.0f,  1.0f,  1.0f,  1.0f,  1.0f,  -1.0f, -1.0f,
-    1.0f,  -1.0f, 1.0f,  1.0f,  1.0f,  -1.0f, 1.0f,  -1.0f, -1.0f, 1.0f,
-    1.0f,  1.0f,  1.0f,  1.0f,  -1.0f, 1.0f,  1.0f,  1.0f,  -1.0f, 1.0f};
-
-const vec3 cub_positions[] = {{0.0f, 0.0f, 0.0f},    {2.0f, 5.0f, -15.0f},
-                              {-1.5f, -2.2f, -2.5f}, {-3.8f, -2.0f, -12.3f},
-                              {2.4f, -0.4f, -3.5f},  {-1.7f, 3.0f, -7.5f},
-                              {1.3f, -2.0f, -2.5f},  {1.5f, 2.0f, -2.5f},
-                              {1.5f, 0.2f, -1.5f},   {-1.3f, 1.0f, -1.5f}};
 
 GLuint shader_load(const char *filename, GLenum shader_type) {
     // read file
@@ -409,20 +390,6 @@ RenderContext *renderer_init() {
     glDeleteShader(vertex_shader);
     glDeleteShader(fragment_shader);
 
-    // create buffer object for the cube data
-    GLuint vbo = 0;
-    glGenBuffers(1, &vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(cube), cube, GL_STATIC_DRAW);
-
-    // create a vertex array object
-    render_ctx->vao = 0;
-    glGenVertexArrays(1, &render_ctx->vao);
-    glBindVertexArray(render_ctx->vao);
-    glEnableVertexAttribArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, NULL);
-
     // create a uniform for the mvp matrix
     render_ctx->mvp_uniform =
         glGetUniformLocation(render_ctx->shader_program, "mvp");
@@ -442,7 +409,8 @@ void renderer_free(RenderContext *render_ctx) {
 void renderer_update(RenderContext *render_ctx, const World *world) {
     // calculate the view-projection matrix
     mat4 proj;
-    glm_perspective(glm_rad(45.0), (float)world->window_w / world->window_h, 0.1, 100.0, proj);
+    glm_perspective(glm_rad(45.0), (float)world->window_w / world->window_h,
+                    0.1, 100.0, proj);
 
     mat4 view;
     camera_get_view_matrix(world->camera, &view);
@@ -456,15 +424,30 @@ void renderer_update(RenderContext *render_ctx, const World *world) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(render_ctx->shader_program);
 
-    glBindVertexArray(render_ctx->vao);
-    for (int i = 0; i < 10; i++) {
-        mat4 mvp, model;
-        glm_mat4_identity(model);
-        glm_translate(model, (float *)cub_positions[i]);
-        glm_mat4_mul(vp, model, mvp);
-        glUniformMatrix4fv(render_ctx->mvp_uniform, 1, GL_FALSE, &mvp[0][0]);
-        glDrawArrays(GL_TRIANGLES, 0, 12 * 3);
+    if (!render_ctx->vao) {
+        GLuint vbo = 0;
+        glGenBuffers(1, &vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vec3) * world->point_cloud->length, world->point_cloud->points, GL_STATIC_DRAW);
+
+        // create a vertex array object
+        render_ctx->vao = 0;
+        glGenVertexArrays(1, &render_ctx->vao);
+        glBindVertexArray(render_ctx->vao);
+        glEnableVertexAttribArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, NULL);
     }
+
+    glBindVertexArray(render_ctx->vao);
+    mat4 mvp, model;
+    glm_mat4_identity(model);
+    glm_scale(model, (vec3){0.01, 0.01, 0.01});
+    glm_translate(model, (vec3){-45, -289, -19});
+    glm_mat4_mul(vp, model, mvp);
+    glUniformMatrix4fv(render_ctx->mvp_uniform, 1, GL_FALSE, &mvp[0][0]);
+    glPointSize(.0002);
+    glDrawArrays(GL_POINTS, 0, world->point_cloud->length);
 
     glfwSwapBuffers(render_ctx->window);
 }
@@ -483,7 +466,7 @@ World *world_init() {
     glm_vec2_zero(world->last_mouse_pos);
 
     world->camera = camera_init();
-    // world->point_cloud = point_cloud_load_from_path("./microtus_oregoni");
+    world->point_cloud = point_cloud_load_from_path("./microtus_oregoni");
     return world;
 }
 
@@ -537,8 +520,7 @@ void input_window_size_callback(GLFWwindow *window, int width, int height) {
     e->window_h = height;
 }
 
-void input_cursor_callback(GLFWwindow* window, double xpos, double ypos)
-{
+void input_cursor_callback(GLFWwindow *window, double xpos, double ypos) {
     EventQueue *event_queue = glfwGetWindowUserPointer(window);
     Event *e = event_queue_new_event(event_queue);
     e->type = E_CAMERA_LOOK;
@@ -574,11 +556,11 @@ void input_update(GLFWwindow *window, EventQueue *event_queue) {
 }
 
 void input_init(GLFWwindow *window, EventQueue *event_queue) {
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-
     glfwSetWindowUserPointer(window, event_queue);
     glfwSetWindowSizeCallback(window, input_window_size_callback);
     glfwSetCursorPosCallback(window, input_cursor_callback);
+
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 }
 
 int main(int argc, char *argv[]) {
