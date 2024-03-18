@@ -443,7 +443,6 @@ void renderer_update(RenderContext *render_ctx, const World *world) {
     mat4 mvp, model;
     glm_mat4_identity(model);
     glm_scale(model, (vec3){0.01, 0.01, 0.01});
-    glm_translate(model, (vec3){-45, -289, -19});
     glm_mat4_mul(vp, model, mvp);
     glUniformMatrix4fv(render_ctx->mvp_uniform, 1, GL_FALSE, &mvp[0][0]);
     glPointSize(.0002);
