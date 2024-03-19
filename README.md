@@ -3,6 +3,12 @@
 Visualize CT scans as point clouds. Currently only supports a stack of TIFF
 images as input.
 
+![screenshot.png](https://github.com/joe-legg/ct-scan-visualizer/blob/master/screenshot.png)
+
+Note: I made this project as an exercise to learn the basics of OpenGL. It
+doesn't serve any practical purpose and is unfinished in its current state.
+There are still a few improvements and fixes to be made.
+
 Dependencies:
 
 - GLFW
